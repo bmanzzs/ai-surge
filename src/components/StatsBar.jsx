@@ -1,10 +1,30 @@
+import { useState, useEffect } from 'react'
 import { SOURCE_TYPES } from '../data/stories'
 
 const PERIOD_LABELS = { '24h': 'today', '7d': 'this week', 'month': 'this month' }
 
-export default function StatsBar({ stories, period }) {
-  const now = new Date()
-  const updatedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+function useRelativeTime(timestamp) {
+  const [label, setLabel] = useState(() => getLabel(timestamp))
+
+  useEffect(() => {
+    setLabel(getLabel(timestamp))
+    const id = setInterval(() => setLabel(getLabel(timestamp)), 30_000)
+    return () => clearInterval(id)
+  }, [timestamp])
+
+  return label
+}
+
+function getLabel(timestamp) {
+  if (!timestamp) return null
+  const mins = Math.floor((Date.now() - timestamp) / 60_000)
+  if (mins < 1) return 'Updated just now'
+  if (mins === 1) return 'Updated 1 min ago'
+  return `Updated ${mins} min ago`
+}
+
+export default function StatsBar({ stories, period, lastFetched }) {
+  const updatedLabel = useRelativeTime(lastFetched)
 
   const typeCounts = stories.reduce((acc, s) => {
     acc[s.type] = (acc[s.type] || 0) + 1
@@ -32,41 +52,47 @@ export default function StatsBar({ stories, period }) {
         {' '}stories {PERIOD_LABELS[period]}
       </span>
 
-      <span style={{ color: 'var(--border-muted)', fontSize: 12 }}>·</span>
+      {stories.length > 0 && (
+        <>
+          <span style={{ color: 'var(--border-muted)', fontSize: 12 }}>·</span>
 
-      {/* Breakdown */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {Object.entries(SOURCE_TYPES).map(([type, config]) => {
-          const count = typeCounts[type] || 0
-          if (!count) return null
-          return (
-            <span key={type} style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-              color: config.color,
-              backgroundColor: config.bgColor,
-              padding: '2px 7px',
-              borderRadius: 4,
-              letterSpacing: '0.04em',
-            }}>
-              {count} {config.label}{count !== 1 ? 's' : ''}
-            </span>
-          )
-        })}
-      </div>
+          {/* Breakdown */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {Object.entries(SOURCE_TYPES).map(([type, config]) => {
+              const count = typeCounts[type] || 0
+              if (!count) return null
+              return (
+                <span key={type} style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  color: config.color,
+                  backgroundColor: config.bgColor,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  letterSpacing: '0.04em',
+                }}>
+                  {count} {config.label}{count !== 1 ? 's' : ''}
+                </span>
+              )
+            })}
+          </div>
+        </>
+      )}
 
-      <span style={{ color: 'var(--border-muted)', fontSize: 12 }}>·</span>
-
-      {/* Last updated */}
-      <span style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 10,
-        color: 'var(--text-tertiary)',
-        letterSpacing: '0.04em',
-        marginLeft: 'auto',
-      }}>
-        Updated {updatedTime}
-      </span>
+      {updatedLabel && (
+        <>
+          <span style={{ color: 'var(--border-muted)', fontSize: 12 }}>·</span>
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            color: 'var(--text-tertiary)',
+            letterSpacing: '0.04em',
+            marginLeft: 'auto',
+          }}>
+            {updatedLabel}
+          </span>
+        </>
+      )}
     </div>
   )
 }
