@@ -1,7 +1,12 @@
 {
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "functions": {
     "api/fetch-news.js": {
       "maxDuration": 300
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
 }
