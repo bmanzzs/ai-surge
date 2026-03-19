@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/fetch-news.js": {
+      "maxDuration": 300
+    }
+  }
+}
