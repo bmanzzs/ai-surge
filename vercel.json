@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/fetch-news.js": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   },
   "rewrites": [

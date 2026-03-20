@@ -57,74 +57,36 @@ const PERIODS = {
 function buildPrompt(periodKey, today) {
   const { label, storyCount, ageFormat } = PERIODS[periodKey]
 
-  return `Today's date is ${today}.
+  return `Today is ${today}. Search the web and return ${storyCount} significant AI news stories from the ${label}. Mix of: model releases, research, funding, policy, open-source, viral moments.
 
-Search the web and find ${storyCount} of the most significant, genuinely newsworthy AI stories from the ${label}. Cover a diverse mix of topics: major model releases, research breakthroughs, industry funding/acquisitions, AI policy and regulation, open-source developments, viral AI moments, and notable community discussions.
+Return ONLY valid JSON, no prose:
 
-Return ONLY a JSON object — no prose, no markdown, no explanation — in exactly this shape:
+{"stories":[{"headline":"verbatim headline","summary":"2-3 sentences on what happened and why it matters","url":"https://direct-link-to-story","source":"e.g. The Verge","source_type":"article","trust_score":8,"age":"3h"}]}
 
-{
-  "stories": [
-    {
-      "headline": "The real headline from the source, close to verbatim",
-      "summary": "2–3 sentences: what happened, why it matters, any notable context",
-      "url": "https://...",
-      "source": "Publication or community name — e.g. 'The Verge', 'r/LocalLLaMA', 'Nature', 'Latent Space'",
-      "source_type": "article",
-      "trust_score": 8,
-      "age": "3h"
-    }
-  ]
-}
-
-FIELD RULES:
-
-source_type must be one of: article | reddit | youtube | podcast | paper
-
-url — THIS IS THE MOST IMPORTANT FIELD:
-  • Must be a REAL, WORKING, DIRECT link to the specific piece of content
-  • For articles: link to the specific article page, not the publication homepage
-  • For Reddit: link to the specific post (reddit.com/r/subreddit/comments/...), not the subreddit
-  • For YouTube videos: link to the specific video (youtube.com/watch?v=...), not the channel
-  • For podcasts: link to the specific episode on YouTube or the podcast website, not the show homepage
-  • For papers: link to the specific arXiv page (arxiv.org/abs/XXXX.XXXXX) or journal article
-  • NEVER use a homepage, channel page, or category page as the URL
-
-trust_score — 1 to 10 integer based on source credibility:
-  • 9–10: Nature, Science, Reuters, AP, official lab announcements (Anthropic, OpenAI, Google blog posts)
-  • 7–8: The Verge, Ars Technica, MIT Technology Review, Bloomberg, Financial Times, BBC
-  • 6–7: TechCrunch, VentureBeat, Wired, well-sourced Reddit posts with links/evidence
-  • 4–6: Reddit speculation, single-source exclusives, unverified leaks
-  • 1–3: Anonymous sources, rumours with no corroboration
-
-age — format: ${ageFormat}
-  Use the actual estimated age of the story relative to today (${today})
-
-source_type = "podcast" rules (STRICT):
-  • Only include podcasts from: Dwarkesh Patel, Lex Fridman, No Priors, The Next Wave, or Latent Space
-  • Only include an episode if it features a genuinely notable AI guest (a founder, lead researcher, or major figure at a top AI lab) OR covers an exceptionally insightful AI topic
-  • Use the YouTube watch URL for the specific episode if available
-  • If you cannot find a qualifying podcast episode from the ${label}, do not include any podcasts — never pad with low-quality episodes
-
-Aim for roughly: 40% articles, 20% reddit, 15% youtube, 10% podcast, 15% papers — adjust based on what was actually newsworthy.`
+RULES:
+- source_type: article | reddit | youtube | podcast | paper
+- url: direct link to the specific story (not homepage). Reddit: /comments/... YouTube: watch?v=... arXiv: /abs/...
+- trust_score 1-10: 9-10=official labs/Reuters/AP, 7-8=Verge/Ars/Bloomberg, 6-7=TechCrunch/Wired, 4-6=Reddit/leaks, 1-3=rumours
+- age format: ${ageFormat} (relative to ${today})
+- podcast: only Dwarkesh Patel, Lex Fridman, No Priors, The Next Wave, Latent Space — only if notable guest/topic, else omit`
 }
 
 // ─── Claude call with pause_turn handling ─────────────────────────────────
 
 async function callClaudeWithWebSearch(prompt) {
   // web_search_20260209 runs server-side — no manual tool execution needed.
-  // We only need to handle pause_turn (server hit its 10-iteration cap).
-  const tools = [{ type: 'web_search_20260209', name: 'web_search' }]
+  // We only need to handle pause_turn (server hit its iteration cap).
+  const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }]
 
   let messages = [{ role: 'user', content: prompt }]
   let response
   let continuations = 0
-  const MAX_CONTINUATIONS = 5
+  const MAX_CONTINUATIONS = 2
 
   while (continuations <= MAX_CONTINUATIONS) {
     response = await anthropic.messages.create({
       model:      'claude-sonnet-4-6',
-      max_tokens: 8192,
+      max_tokens: 4000,
       tools,
       messages,
     })
@@ -263,6 +225,19 @@ async function refreshPeriod(periodKey, today) {
   return { period: periodKey, inserted: result.inserted, skipped: skipped.length }
 }
 
+// ─── Timeout wrapper ──────────────────────────────────────────────────────
+
+function withTimeout(promise, ms) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Timed out after ${ms / 1000}s — try again or split into smaller requests`)),
+      ms,
+    )
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -270,25 +245,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed — use POST' })
   }
 
-  const requestedPeriod = req.query?.period
-  const periodsToRefresh = requestedPeriod
-    ? [requestedPeriod]
-    : Object.keys(PERIODS)
-
-  const invalid = periodsToRefresh.filter(p => !PERIODS[p])
-  if (invalid.length) {
-    return res.status(400).json({ error: `Unknown period(s): ${invalid.join(', ')}. Valid: ${Object.keys(PERIODS).join(', ')}` })
+  const period = req.query?.period
+  if (!period) {
+    return res.status(400).json({
+      error: `period query param is required. Valid values: ${Object.keys(PERIODS).join(', ')}`,
+    })
+  }
+  if (!PERIODS[period]) {
+    return res.status(400).json({ error: `Unknown period "${period}". Valid: ${Object.keys(PERIODS).join(', ')}` })
   }
 
   const today = new Date().toISOString().split('T')[0]
-  console.log(`fetch-news started — date: ${today}, periods: ${periodsToRefresh.join(', ')}`)
+  console.log(`fetch-news started — date: ${today}, period: ${period}`)
 
   try {
-    // Run periods in parallel — each is an independent Claude + Supabase operation
-    const results = await Promise.all(
-      periodsToRefresh.map(p => refreshPeriod(p, today))
-    )
-    return res.status(200).json({ ok: true, date: today, results })
+    const result = await withTimeout(refreshPeriod(period, today), 50_000)
+    return res.status(200).json({ ok: true, date: today, results: [result] })
   } catch (err) {
     console.error('fetch-news error:', err)
     return res.status(500).json({ error: err.message })
