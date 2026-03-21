@@ -34,19 +34,19 @@ const supabase = createClient(
 const PERIODS = {
   '24h': {
     label:       'past 24 hours',
-    storyCount:  '8 to 12',
-    ageFormat:   'hours only — e.g. "1h", "6h", "20h"',
+    storyCount:  5,
+    ageFormat:   'hours — e.g. "1h", "6h", "20h"',
     dbPeriod:    '24h',
   },
   '7d': {
     label:       'past 7 days',
-    storyCount:  '10 to 14',
+    storyCount:  5,
     ageFormat:   'days — e.g. "1d", "3d", "6d"',
     dbPeriod:    '7d',
   },
   '30d': {
     label:       'past 30 days',
-    storyCount:  '12 to 15',
+    storyCount:  5,
     ageFormat:   'weeks — e.g. "1w", "2w", "3w", "4w"',
     dbPeriod:    '30d',
   },
@@ -57,18 +57,7 @@ const PERIODS = {
 function buildPrompt(periodKey, today) {
   const { label, storyCount, ageFormat } = PERIODS[periodKey]
 
-  return `Today is ${today}. Search the web and return ${storyCount} significant AI news stories from the ${label}. Mix of: model releases, research, funding, policy, open-source, viral moments.
-
-Return ONLY valid JSON, no prose:
-
-{"stories":[{"headline":"verbatim headline","summary":"2-3 sentences on what happened and why it matters","url":"https://direct-link-to-story","source":"e.g. The Verge","source_type":"article","trust_score":8,"age":"3h"}]}
-
-RULES:
-- source_type: article | reddit | youtube | podcast | paper
-- url: direct link to the specific story (not homepage). Reddit: /comments/... YouTube: watch?v=... arXiv: /abs/...
-- trust_score 1-10: 9-10=official labs/Reuters/AP, 7-8=Verge/Ars/Bloomberg, 6-7=TechCrunch/Wired, 4-6=Reddit/leaks, 1-3=rumours
-- age format: ${ageFormat} (relative to ${today})
-- podcast: only Dwarkesh Patel, Lex Fridman, No Priors, The Next Wave, Latent Space — only if notable guest/topic, else omit`
+  return `Search for ${storyCount} important AI news stories from the ${label} (today is ${today}). Return a JSON object with a "stories" array: [{"headline","summary","url","source","source_type","trust_score","age"}]. source_type: article/reddit/youtube/podcast/paper. trust_score 1-10. age in ${ageFormat}. Real direct URLs only. No prose, just JSON.`
 }
 
 // ─── Claude call with pause_turn handling ─────────────────────────────────
@@ -76,7 +65,7 @@ RULES:
 async function callClaudeWithWebSearch(prompt) {
   // web_search_20260209 runs server-side — no manual tool execution needed.
   // We only need to handle pause_turn (server hit its iteration cap).
-  const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }]
+  const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }]
 
   let messages = [{ role: 'user', content: prompt }]
   let response
